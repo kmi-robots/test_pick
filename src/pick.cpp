@@ -27,7 +27,10 @@ const double tau = 2 * M_PI;
 
 class Pick {
 public:
-    explicit Pick(ros::NodeHandle &node) : _perc_client("image_action", true), _move_group("arm_torso") {
+    explicit Pick(ros::NodeHandle &node) :
+    _gotCloud(false),
+    _perc_client("image_action", true),
+    _move_group("arm_torso") {
         _move_group.setPlanningTime(45.0);
         _grasp_client = node.serviceClient<sciroc_msgs::DetectGrasps>("detect_grasps");
         _sub = node.subscribe("/xtion/depth_registered/points", 10, &Pick::pointcloudCallback, this);
@@ -36,6 +39,7 @@ public:
 
     void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
         _lastCloud = *msg;
+        _gotCloud = true;
     }
 
     void addFloor()
@@ -79,15 +83,15 @@ public:
         collision_objects.resize(1);
 
         // Add the first table where the cube will originally be kept.
-        collision_objects[0].id = "floor";
+        collision_objects[0].id = "object";
         collision_objects[0].header.frame_id = "xtion_rgb_optical_frame";
 
         collision_objects[0].primitives.resize(1);
         collision_objects[0].primitives[0].type = collision_objects[0].primitives[0].BOX;
         collision_objects[0].primitives[0].dimensions.resize(3);
-        collision_objects[0].primitives[0].dimensions[0] = 1.0;
-        collision_objects[0].primitives[0].dimensions[1] = 1.0;
-        collision_objects[0].primitives[0].dimensions[2] = 0.05;
+        collision_objects[0].primitives[0].dimensions[0] = size[0];
+        collision_objects[0].primitives[0].dimensions[1] = size[1];
+        collision_objects[0].primitives[0].dimensions[2] = size[2];
 
         collision_objects[0].primitive_poses.resize(1);
         collision_objects[0].primitive_poses[0].position.x = position.x();
@@ -195,6 +199,11 @@ public:
         ROS_INFO("Waiting for grasp server");
         _grasp_client.waitForExistence();
 
+        ROS_INFO("Waiting for cloud message");
+        while(!_gotCloud) {
+            ros::WallDuration(1.0).sleep();
+        }
+
         sciroc_msgs::DetectGrasps srv;
 //        srv.request.cloud = result->crop;
 
@@ -216,6 +225,8 @@ public:
 //        pcl::toROSMsg(*cloud, srv.request.cloud);
         pcl::toROSMsg(*cloud, cloud_msg);
         _pub.publish(cloud_msg);
+
+        srv.request.cloud = cloud_msg;
 
         if (!_grasp_client.call(srv))
         {
@@ -276,6 +287,7 @@ public:
         // BEGIN_SUB_TUTORIAL pick3
         // Set support surface as table1.
         _move_group.setSupportSurfaceName("floor");
+        _gotCloud = false;
         // Call pick to pick up the object using the grasps given
         _move_group.pick("object", grasps);
         // END_SUB_TUTORIAL
@@ -290,6 +302,7 @@ private:
     ros::Subscriber _sub;
     ros::Publisher _pub;
     sensor_msgs::PointCloud2 _lastCloud;
+    bool _gotCloud;
 };
 
 void openGripper(trajectory_msgs::JointTrajectory& posture)
