@@ -40,6 +40,7 @@ public:
 
     void addFloor()
     {
+        _planning_scene_interface.removeCollisionObjects({"floor", "object"});
         // BEGIN_SUB_TUTORIAL table1
         //
         // Creating Environment
@@ -111,7 +112,7 @@ public:
         pass.setInputCloud(cloud);
         pass.setFilterFieldName("z");
         // min and max values in z axis to keep
-        pass.setFilterLimits(0.8, 1.1);
+        pass.setFilterLimits(0.6, 1.0);
         pass.filter(*cloud);
     }
 
@@ -215,8 +216,6 @@ public:
 //        pcl::toROSMsg(*cloud, srv.request.cloud);
         pcl::toROSMsg(*cloud, cloud_msg);
         _pub.publish(cloud_msg);
-        
-        return;
 
         if (!_grasp_client.call(srv))
         {
@@ -278,7 +277,7 @@ public:
         // Set support surface as table1.
         _move_group.setSupportSurfaceName("floor");
         // Call pick to pick up the object using the grasps given
-        //_move_group.pick("object", grasps);
+        _move_group.pick("object", grasps);
         // END_SUB_TUTORIAL
     }
 
