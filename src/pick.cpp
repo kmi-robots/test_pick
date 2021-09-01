@@ -16,6 +16,10 @@
 #include "pcl/common/centroid.h"
 #include "pcl/common/common.h"
 #include "pcl/common/transforms.h"
+#include "pcl/filters/passthrough.h"
+#include <pcl/filters/extract_indices.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/segmentation/sac_segmentation.h>
 #include "Eigen/src/Eigenvalues/SelfAdjointEigenSolver.h"
 
 // The circle constant tau = 2*pi. One tau is one rotation in radians.
@@ -26,6 +30,12 @@ public:
     explicit Pick(ros::NodeHandle &node) : _perc_client("image_action", true), _move_group("arm_torso") {
         _move_group.setPlanningTime(45.0);
         _grasp_client = node.serviceClient<sciroc_msgs::DetectGrasps>("detect_grasps");
+        _sub = node.subscribe("/xtion/depth_registered/points", 10, &Pick::pointcloudCallback, this);
+        _pub = node.advertise<sensor_msgs::PointCloud2>("/depth_cloud", 10);
+    }
+
+    void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
+        _lastCloud = *msg;
     }
 
     void addFloor()
@@ -69,7 +79,7 @@ public:
 
         // Add the first table where the cube will originally be kept.
         collision_objects[0].id = "floor";
-        collision_objects[0].header.frame_id = "optical_frame";
+        collision_objects[0].header.frame_id = "xtion_rgb_optical_frame";
 
         collision_objects[0].primitives.resize(1);
         collision_objects[0].primitives[0].type = collision_objects[0].primitives[0].BOX;
@@ -93,32 +103,120 @@ public:
         _planning_scene_interface.applyCollisionObjects(collision_objects);
     }
 
+    /** \brief Given a pointcloud extract the ROI defined by the user.
+        @param cloud - Pointcloud whose ROI needs to be extracted. */
+    void passThroughFilter(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud)
+    {
+        pcl::PassThrough<pcl::PointXYZ> pass;
+        pass.setInputCloud(cloud);
+        pass.setFilterFieldName("z");
+        // min and max values in z axis to keep
+        pass.setFilterLimits(0.8, 1.1);
+        pass.filter(*cloud);
+    }
+
+    /** \brief Given the pointcloud and pointer cloud_normals compute the point normals and store in cloud_normals.
+        @param cloud - Pointcloud.
+        @param cloud_normals - The point normals once computer will be stored in this. */
+    void computeNormals(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
+                        const pcl::PointCloud<pcl::Normal>::Ptr& cloud_normals)
+    {
+        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
+        pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+        ne.setSearchMethod(tree);
+        ne.setInputCloud(cloud);
+        // Set the number of k nearest neighbors to use for the feature estimation.
+        ne.setKSearch(50);
+        ne.compute(*cloud_normals);
+    }
+
+    /** \brief Given the point normals and point indices, extract the normals for the indices.
+        @param cloud_normals - Point normals.
+        @param inliers_plane - Indices whose normals need to be extracted. */
+    void extractNormals(const pcl::PointCloud<pcl::Normal>::Ptr& cloud_normals,
+                        const pcl::PointIndices::Ptr& inliers_plane)
+    {
+        pcl::ExtractIndices<pcl::Normal> extract_normals;
+        extract_normals.setNegative(true);
+        extract_normals.setInputCloud(cloud_normals);
+        extract_normals.setIndices(inliers_plane);
+        extract_normals.filter(*cloud_normals);
+    }
+
+    /** \brief Given the pointcloud and indices of the plane, remove the planar region from the pointcloud.
+        @param cloud - Pointcloud.
+        @param inliers_plane - Indices representing the plane. */
+    void removePlaneSurface(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud, const pcl::PointIndices::Ptr& inliers_plane)
+    {
+        // create a SAC segmenter without using normals
+        pcl::SACSegmentation<pcl::PointXYZ> segmentor;
+        segmentor.setOptimizeCoefficients(true);
+        segmentor.setModelType(pcl::SACMODEL_PLANE);
+        segmentor.setMethodType(pcl::SAC_RANSAC);
+        /* run at max 1000 iterations before giving up */
+        segmentor.setMaxIterations(1000);
+        /* tolerance for variation from model */
+        segmentor.setDistanceThreshold(0.01);
+        segmentor.setInputCloud(cloud);
+        /* Create the segmentation object for the planar model and set all the parameters */
+        pcl::ModelCoefficients::Ptr coefficients_plane(new pcl::ModelCoefficients);
+        segmentor.segment(*inliers_plane, *coefficients_plane);
+        /* Extract the planar inliers from the input cloud */
+        pcl::ExtractIndices<pcl::PointXYZ> extract_indices;
+        extract_indices.setInputCloud(cloud);
+        extract_indices.setIndices(inliers_plane);
+        /* Remove the planar inliers, extract the rest */
+        extract_indices.setNegative(true);
+        extract_indices.filter(*cloud);
+    }
+
     void pickFromFloor()
     {
         ROS_INFO("Waiting for perception action");
-        _perc_client.waitForServer();
+//        _perc_client.waitForServer();
 
         sciroc_msgs::PerceptionGoal goal;
         goal.mode = 1;
-        _perc_client.sendGoal(goal);
+//        _perc_client.sendGoal(goal);
 
-        bool finished_before_timeout = _perc_client.waitForResult(ros::Duration(30.0));
+//        bool finished_before_timeout = _perc_client.waitForResult(ros::Duration(30.0));
 
-        if (!finished_before_timeout)
-        {
-            ROS_INFO("Action did not finish before the time out.");
-            return;
-        }
+//        if (!finished_before_timeout)
+//        {
+//            ROS_INFO("Action did not finish before the time out.");
+//            return;
+//        }
 
-        actionlib::SimpleClientGoalState state = _perc_client.getState();
-        ROS_INFO("Action finished: %s",state.toString().c_str());
-        sciroc_msgs::PerceptionResult::ConstPtr result = _perc_client.getResult();
+//        actionlib::SimpleClientGoalState state = _perc_client.getState();
+//        ROS_INFO("Action finished: %s",state.toString().c_str());
+//        sciroc_msgs::PerceptionResult::ConstPtr result = _perc_client.getResult();
 
         ROS_INFO("Waiting for grasp server");
         _grasp_client.waitForExistence();
 
         sciroc_msgs::DetectGrasps srv;
-        srv.request.cloud = result->crop;
+//        srv.request.cloud = result->crop;
+
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+//        pcl::fromROSMsg(result->crop, *cloud);
+        pcl::fromROSMsg(_lastCloud, *cloud);
+
+        passThroughFilter(cloud);
+        // Compute point normals for later sample consensus step.
+        pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
+        computeNormals(cloud, cloud_normals);
+        // inliers_plane will hold the indices of the point cloud that correspond to a plane.
+        pcl::PointIndices::Ptr inliers_plane(new pcl::PointIndices);
+        // Detect and remove points on the (planar) surface on which the cylinder is resting.
+        removePlaneSurface(cloud, inliers_plane);
+        // Remove surface points from normals as well
+        extractNormals(cloud_normals, inliers_plane);
+        sensor_msgs::PointCloud2 cloud_msg;
+//        pcl::toROSMsg(*cloud, srv.request.cloud);
+        pcl::toROSMsg(*cloud, cloud_msg);
+        _pub.publish(cloud_msg);
+        
+        return;
 
         if (!_grasp_client.call(srv))
         {
@@ -126,9 +224,6 @@ public:
             return;
         }
         std::vector<moveit_msgs::Grasp> grasps = srv.response.grasp_configs;
-
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::fromROSMsg(result->crop, *cloud);
 
         // Compute principal directions
         Eigen::Vector4f pcaCentroid;
@@ -193,6 +288,9 @@ private:
     actionlib::SimpleActionClient<sciroc_msgs::PerceptionAction> _perc_client;
     moveit::planning_interface::PlanningSceneInterface _planning_scene_interface;
     moveit::planning_interface::MoveGroupInterface _move_group;
+    ros::Subscriber _sub;
+    ros::Publisher _pub;
+    sensor_msgs::PointCloud2 _lastCloud;
 };
 
 void openGripper(trajectory_msgs::JointTrajectory& posture)
@@ -293,7 +391,7 @@ int main(int argc, char** argv)
   ros::AsyncSpinner spinner(1);
   spinner.start();
 
-  ros::WallDuration(1.0).sleep();
+  ros::WallDuration(5.0).sleep();
 
   pick.addFloor();
 
