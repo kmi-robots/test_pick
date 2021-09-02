@@ -177,6 +177,7 @@ public:
 
     void pickFromFloor()
     {
+        _planning_scene_interface.removeCollisionObjects({"floor", "object"});
         ROS_INFO("Waiting for perception action");
 //        _perc_client.waitForServer();
 
@@ -213,14 +214,14 @@ public:
 
         passThroughFilter(cloud);
         // Compute point normals for later sample consensus step.
-        pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
-        computeNormals(cloud, cloud_normals);
+//        pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
+//        computeNormals(cloud, cloud_normals);
         // inliers_plane will hold the indices of the point cloud that correspond to a plane.
-        pcl::PointIndices::Ptr inliers_plane(new pcl::PointIndices);
+//        pcl::PointIndices::Ptr inliers_plane(new pcl::PointIndices);
         // Detect and remove points on the (planar) surface on which the cylinder is resting.
-        removePlaneSurface(cloud, inliers_plane);
+//        removePlaneSurface(cloud, inliers_plane);
         // Remove surface points from normals as well
-        extractNormals(cloud_normals, inliers_plane);
+//        extractNormals(cloud_normals, inliers_plane);
         sensor_msgs::PointCloud2 cloud_msg;
 //        pcl::toROSMsg(*cloud, srv.request.cloud);
         pcl::toROSMsg(*cloud, cloud_msg);
@@ -261,7 +262,7 @@ public:
 
         std::vector<double> v = {maxPoint.x - minPoint.x, maxPoint.y - minPoint.y, maxPoint.z - minPoint.z};
 
-        addObject(bboxQuaternion, bboxTransform, v);
+//        addObject(bboxQuaternion, bboxTransform, v);
 
         for(moveit_msgs::Grasp& g : grasps) {
             // Setting pre-grasp approach
@@ -284,12 +285,18 @@ public:
             // END_SUB_TUTORIAL
         }
 
+        _move_group.setPoseTarget(grasps[0].grasp_pose);
+
+        moveit::planning_interface::MoveGroupInterface::Plan my_plan;
+        bool success = (_move_group.plan(my_plan) == moveit::planning_interface::MoveItErrorCode::SUCCESS);
+        ROS_INFO("Visualizing plan 1 (pose goal) %s", success ? "" : "FAILED");
+
         // BEGIN_SUB_TUTORIAL pick3
         // Set support surface as table1.
-        _move_group.setSupportSurfaceName("floor");
+//        _move_group.setSupportSurfaceName("floor");
         _gotCloud = false;
         // Call pick to pick up the object using the grasps given
-        _move_group.pick("object", grasps);
+//        _move_group.pick("object", grasps);
         // END_SUB_TUTORIAL
     }
 
@@ -405,7 +412,7 @@ int main(int argc, char** argv)
 
   ros::WallDuration(5.0).sleep();
 
-  pick.addFloor();
+//  pick.addFloor();
 
   // Wait a bit for ROS things to initialize
   ros::WallDuration(1.0).sleep();
