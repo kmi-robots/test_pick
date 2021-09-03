@@ -16,10 +16,9 @@
 #include "pcl/common/centroid.h"
 #include "pcl/common/common.h"
 #include "pcl/common/transforms.h"
-#include "pcl/filters/passthrough.h"
-#include <pcl/filters/extract_indices.h>
-#include <pcl/features/normal_3d.h>
-#include <pcl/segmentation/sac_segmentation.h>
+#include "pcl/features/normal_3d.h"
+
+// Eigen
 #include "Eigen/src/Eigenvalues/SelfAdjointEigenSolver.h"
 
 // The circle constant tau = 2*pi. One tau is one rotation in radians.
@@ -89,9 +88,9 @@ public:
         collision_objects[0].primitives.resize(1);
         collision_objects[0].primitives[0].type = collision_objects[0].primitives[0].BOX;
         collision_objects[0].primitives[0].dimensions.resize(3);
-        collision_objects[0].primitives[0].dimensions[0] = size[0];
-        collision_objects[0].primitives[0].dimensions[1] = size[1];
-        collision_objects[0].primitives[0].dimensions[2] = size[2];
+        collision_objects[0].primitives[0].dimensions[0] = 0.9*size[0];
+        collision_objects[0].primitives[0].dimensions[1] = 0.9*size[1];
+        collision_objects[0].primitives[0].dimensions[2] = 0.9*size[2];
 
         collision_objects[0].primitive_poses.resize(1);
         collision_objects[0].primitive_poses[0].position.x = position.x();
@@ -108,74 +107,24 @@ public:
         _planning_scene_interface.applyCollisionObjects(collision_objects);
     }
 
-    /** \brief Given a pointcloud extract the ROI defined by the user.
-        @param cloud - Pointcloud whose ROI needs to be extracted. */
-    void passThroughFilter(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud)
+    static void closedGripper(trajectory_msgs::JointTrajectory& posture)
     {
-        pcl::PassThrough<pcl::PointXYZ> pass;
-        pass.setInputCloud(cloud);
-        pass.setFilterFieldName("z");
-        // min and max values in z axis to keep
-        pass.setFilterLimits(0.6, 1.0);
-        pass.filter(*cloud);
+        // BEGIN_SUB_TUTORIAL closed_gripper
+        /* Add both finger joints of panda robot. */
+        posture.joint_names.resize(2);
+        posture.joint_names[0] = "gripper_left_finger_joint";
+        posture.joint_names[1] = "gripper_right_finger_joint";
+
+        /* Set them as closed. */
+        posture.points.resize(1);
+        posture.points[0].positions.resize(2);
+        posture.points[0].positions[0] = 0.01;
+        posture.points[0].positions[1] = 0.01;
+        posture.points[0].time_from_start = ros::Duration(0.5);
+        // END_SUB_TUTORIAL
     }
 
-    /** \brief Given the pointcloud and pointer cloud_normals compute the point normals and store in cloud_normals.
-        @param cloud - Pointcloud.
-        @param cloud_normals - The point normals once computer will be stored in this. */
-    void computeNormals(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
-                        const pcl::PointCloud<pcl::Normal>::Ptr& cloud_normals)
-    {
-        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
-        pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
-        ne.setSearchMethod(tree);
-        ne.setInputCloud(cloud);
-        // Set the number of k nearest neighbors to use for the feature estimation.
-        ne.setKSearch(50);
-        ne.compute(*cloud_normals);
-    }
-
-    /** \brief Given the point normals and point indices, extract the normals for the indices.
-        @param cloud_normals - Point normals.
-        @param inliers_plane - Indices whose normals need to be extracted. */
-    void extractNormals(const pcl::PointCloud<pcl::Normal>::Ptr& cloud_normals,
-                        const pcl::PointIndices::Ptr& inliers_plane)
-    {
-        pcl::ExtractIndices<pcl::Normal> extract_normals;
-        extract_normals.setNegative(true);
-        extract_normals.setInputCloud(cloud_normals);
-        extract_normals.setIndices(inliers_plane);
-        extract_normals.filter(*cloud_normals);
-    }
-
-    /** \brief Given the pointcloud and indices of the plane, remove the planar region from the pointcloud.
-        @param cloud - Pointcloud.
-        @param inliers_plane - Indices representing the plane. */
-    void removePlaneSurface(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud, const pcl::PointIndices::Ptr& inliers_plane)
-    {
-        // create a SAC segmenter without using normals
-        pcl::SACSegmentation<pcl::PointXYZ> segmentor;
-        segmentor.setOptimizeCoefficients(true);
-        segmentor.setModelType(pcl::SACMODEL_PLANE);
-        segmentor.setMethodType(pcl::SAC_RANSAC);
-        /* run at max 1000 iterations before giving up */
-        segmentor.setMaxIterations(1000);
-        /* tolerance for variation from model */
-        segmentor.setDistanceThreshold(0.01);
-        segmentor.setInputCloud(cloud);
-        /* Create the segmentation object for the planar model and set all the parameters */
-        pcl::ModelCoefficients::Ptr coefficients_plane(new pcl::ModelCoefficients);
-        segmentor.segment(*inliers_plane, *coefficients_plane);
-        /* Extract the planar inliers from the input cloud */
-        pcl::ExtractIndices<pcl::PointXYZ> extract_indices;
-        extract_indices.setInputCloud(cloud);
-        extract_indices.setIndices(inliers_plane);
-        /* Remove the planar inliers, extract the rest */
-        extract_indices.setNegative(true);
-        extract_indices.filter(*cloud);
-    }
-
-    void pickFromFloor()
+    void pick()
     {
         _planning_scene_interface.removeCollisionObjects({"floor", "object"});
         ROS_INFO("Waiting for perception action");
@@ -285,7 +234,7 @@ public:
             // BEGIN_SUB_TUTORIAL pick2
             // Setting posture of eef during grasp
             // +++++++++++++++++++++++++++++++++++
-//            closedGripper(grasps[0].grasp_posture);
+            closedGripper(grasps[0].grasp_posture);
             // END_SUB_TUTORIAL
         }
 
@@ -313,31 +262,14 @@ void openGripper(trajectory_msgs::JointTrajectory& posture)
   // BEGIN_SUB_TUTORIAL open_gripper
   /* Add both finger joints of panda robot. */
   posture.joint_names.resize(2);
-  posture.joint_names[0] = "panda_finger_joint1";
-  posture.joint_names[1] = "panda_finger_joint2";
+  posture.joint_names[0] = "gripper_left_finger_joint";
+  posture.joint_names[1] = "gripper_right_finger_joint";
 
   /* Set them as open, wide enough for the object to fit. */
   posture.points.resize(1);
   posture.points[0].positions.resize(2);
-  posture.points[0].positions[0] = 0.04;
-  posture.points[0].positions[1] = 0.04;
-  posture.points[0].time_from_start = ros::Duration(0.5);
-  // END_SUB_TUTORIAL
-}
-
-void closedGripper(trajectory_msgs::JointTrajectory& posture)
-{
-  // BEGIN_SUB_TUTORIAL closed_gripper
-  /* Add both finger joints of panda robot. */
-  posture.joint_names.resize(2);
-  posture.joint_names[0] = "panda_finger_joint1";
-  posture.joint_names[1] = "panda_finger_joint2";
-
-  /* Set them as closed. */
-  posture.points.resize(1);
-  posture.points[0].positions.resize(2);
-  posture.points[0].positions[0] = 0.00;
-  posture.points[0].positions[1] = 0.00;
+  posture.points[0].positions[0] = 0.05;
+  posture.points[0].positions[1] = 0.05;
   posture.points[0].time_from_start = ros::Duration(0.5);
   // END_SUB_TUTORIAL
 }
@@ -413,7 +345,7 @@ int main(int argc, char** argv)
   // Wait a bit for ROS things to initialize
   ros::WallDuration(1.0).sleep();
 
-  pick.pickFromFloor();
+  pick.pick();
 
   ros::WallDuration(1.0).sleep();
 
