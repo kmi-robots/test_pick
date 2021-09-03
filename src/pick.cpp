@@ -28,19 +28,19 @@ const double tau = 2 * M_PI;
 class Pick {
 public:
     explicit Pick(ros::NodeHandle &node) :
-    _gotCloud(false),
+//    _gotCloud(false),
     _perc_client("image_action", true),
     _move_group("arm_torso") {
         _move_group.setPlanningTime(45.0);
         _grasp_client = node.serviceClient<sciroc_msgs::DetectGrasps>("detect_grasps");
-        _sub = node.subscribe("/xtion/depth_registered/points", 10, &Pick::pointcloudCallback, this);
+//        _sub = node.subscribe("/xtion/depth_registered/points", 10, &Pick::pointcloudCallback, this);
         _pub = node.advertise<sensor_msgs::PointCloud2>("/depth_cloud", 10);
     }
 
-    void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
-        _lastCloud = *msg;
-        _gotCloud = true;
-    }
+//    void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
+//        _lastCloud = *msg;
+//        _gotCloud = true;
+//    }
 
     void addFloor()
     {
@@ -179,40 +179,40 @@ public:
     {
         _planning_scene_interface.removeCollisionObjects({"floor", "object"});
         ROS_INFO("Waiting for perception action");
-//        _perc_client.waitForServer();
+        _perc_client.waitForServer();
 
         sciroc_msgs::PerceptionGoal goal;
         goal.mode = 1;
-//        _perc_client.sendGoal(goal);
+        _perc_client.sendGoal(goal);
 
-//        bool finished_before_timeout = _perc_client.waitForResult(ros::Duration(30.0));
+        bool finished_before_timeout = _perc_client.waitForResult(ros::Duration(30.0));
 
-//        if (!finished_before_timeout)
-//        {
-//            ROS_INFO("Action did not finish before the time out.");
-//            return;
-//        }
+        if (!finished_before_timeout)
+        {
+            ROS_INFO("Action did not finish before the time out.");
+            return;
+        }
 
-//        actionlib::SimpleClientGoalState state = _perc_client.getState();
-//        ROS_INFO("Action finished: %s",state.toString().c_str());
-//        sciroc_msgs::PerceptionResult::ConstPtr result = _perc_client.getResult();
+        actionlib::SimpleClientGoalState state = _perc_client.getState();
+        ROS_INFO("Action finished: %s",state.toString().c_str());
+        sciroc_msgs::PerceptionResult::ConstPtr result = _perc_client.getResult();
 
         ROS_INFO("Waiting for grasp server");
         _grasp_client.waitForExistence();
 
-        ROS_INFO("Waiting for cloud message");
-        while(!_gotCloud) {
-            ros::WallDuration(1.0).sleep();
-        }
+//        ROS_INFO("Waiting for cloud message");
+//        while(!_gotCloud) {
+//            ros::WallDuration(1.0).sleep();
+//        }
 
         sciroc_msgs::DetectGrasps srv;
-//        srv.request.cloud = result->crop;
+        srv.request.cloud = result->crop;
 
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+//        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
 //        pcl::fromROSMsg(result->crop, *cloud);
-        pcl::fromROSMsg(_lastCloud, *cloud);
+//        pcl::fromROSMsg(_lastCloud, *cloud);
 
-        passThroughFilter(cloud);
+//        passThroughFilter(cloud);
         // Compute point normals for later sample consensus step.
 //        pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
 //        computeNormals(cloud, cloud_normals);
@@ -222,12 +222,12 @@ public:
 //        removePlaneSurface(cloud, inliers_plane);
         // Remove surface points from normals as well
 //        extractNormals(cloud_normals, inliers_plane);
-        sensor_msgs::PointCloud2 cloud_msg;
+//        sensor_msgs::PointCloud2 cloud_msg;
 //        pcl::toROSMsg(*cloud, srv.request.cloud);
-        pcl::toROSMsg(*cloud, cloud_msg);
-        _pub.publish(cloud_msg);
+//        pcl::toROSMsg(*cloud, cloud_msg);
+        _pub.publish(result->crop);
 
-        srv.request.cloud = cloud_msg;
+//        srv.request.cloud = cloud_msg;
 
         if (!_grasp_client.call(srv))
         {
@@ -235,6 +235,10 @@ public:
             return;
         }
         std::vector<moveit_msgs::Grasp> grasps = srv.response.grasp_configs;
+
+
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::fromROSMsg(result->crop, *cloud);
 
         // Compute principal directions
         Eigen::Vector4f pcaCentroid;
@@ -262,7 +266,7 @@ public:
 
         std::vector<double> v = {maxPoint.x - minPoint.x, maxPoint.y - minPoint.y, maxPoint.z - minPoint.z};
 
-//        addObject(bboxQuaternion, bboxTransform, v);
+        addObject(bboxQuaternion, bboxTransform, v);
 
         for(moveit_msgs::Grasp& g : grasps) {
             // Setting pre-grasp approach
@@ -285,18 +289,10 @@ public:
             // END_SUB_TUTORIAL
         }
 
-        _move_group.setPoseTarget(grasps[0].grasp_pose);
-
-        moveit::planning_interface::MoveGroupInterface::Plan my_plan;
-        bool success = (_move_group.plan(my_plan) == moveit::planning_interface::MoveItErrorCode::SUCCESS);
-        ROS_INFO("Visualizing plan 1 (pose goal) %s", success ? "" : "FAILED");
-
         // BEGIN_SUB_TUTORIAL pick3
         // Set support surface as table1.
-//        _move_group.setSupportSurfaceName("floor");
-        _gotCloud = false;
         // Call pick to pick up the object using the grasps given
-//        _move_group.pick("object", grasps);
+        _move_group.pick("object", grasps);
         // END_SUB_TUTORIAL
     }
 
@@ -306,10 +302,10 @@ private:
     actionlib::SimpleActionClient<sciroc_msgs::PerceptionAction> _perc_client;
     moveit::planning_interface::PlanningSceneInterface _planning_scene_interface;
     moveit::planning_interface::MoveGroupInterface _move_group;
-    ros::Subscriber _sub;
+//    ros::Subscriber _sub;
     ros::Publisher _pub;
-    sensor_msgs::PointCloud2 _lastCloud;
-    bool _gotCloud;
+//    sensor_msgs::PointCloud2 _lastCloud;
+//    bool _gotCloud;
 };
 
 void openGripper(trajectory_msgs::JointTrajectory& posture)
