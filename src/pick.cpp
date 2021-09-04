@@ -174,8 +174,6 @@ public:
 //        sensor_msgs::PointCloud2 cloud_msg;
 //        pcl::toROSMsg(*cloud, srv.request.cloud);
 //        pcl::toROSMsg(*cloud, cloud_msg);
-        _pub.publish(result->crop);
-
 //        srv.request.cloud = cloud_msg;
 
         if (!_grasp_client.call(srv))
@@ -187,6 +185,7 @@ public:
 
 
         pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+        _pub.publish(srv.response.filtered_cloud);
         pcl::fromROSMsg(srv.response.filtered_cloud, *cloud);
 
         // Compute principal directions
