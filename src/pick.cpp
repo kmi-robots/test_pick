@@ -187,7 +187,7 @@ public:
 
 
         pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::fromROSMsg(result->crop, *cloud);
+        pcl::fromROSMsg(srv.response.filtered_cloud, *cloud);
 
         // Compute principal directions
         Eigen::Vector4f pcaCentroid;
